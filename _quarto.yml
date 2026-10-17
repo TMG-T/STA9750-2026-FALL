@@ -20,3 +20,6 @@ format:
 
 editor:
   mode: source
+
+execute:
+  cache: true
