@@ -385,7 +385,7 @@ summary_df <- data.frame(
 
 summary_df$stat <- factor(summary_df$stat, levels = c("Median" ,"Green Mountain Transit"))
 
-ggplot(summary_df, aes(x = stat, y = value)) +
+print_plot_greenest_transit <- ggplot(summary_df, aes(x = stat, y = value)) +
   geom_col(fill = "dodgerblue4") +
   geom_text(aes(label = round(value, 2)), vjust = -0.3, size = 3) +
   scale_y_sqrt(expand = expansion(mult = c(0, 0.1))) +
@@ -393,7 +393,7 @@ ggplot(summary_df, aes(x = stat, y = value)) +
        title = "Median CO2 Emissions per Passenger Mile vs. Green Mountain Transit Authority CO2 Emissions per Passenger Mile") +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
 
-
+print(print_plot_greenest_transit)
 ```
 
 While the New Jersey Transit Corporation won the Worst of Fuel Consumption award, due to the NJTC insatiable thirst for fuel. The spokesperson for the NJTC, Niko Belic, said in a statement "We are getting quenched every year ... we hope to cut this number in half by 2030". 
@@ -444,7 +444,7 @@ times_second <- agency_fuel$total_fuel[1] / agency_fuel$total_fuel[2]
 
 plot_df <- slice_head(agency_fuel, n = 10)
 
-ggplot(plot_df,
+plot_worst_of <- ggplot(plot_df,
        aes(x = reorder(abbr, -total_fuel),
            y = total_fuel / 1e6,
            fill = highlight)) +
@@ -459,6 +459,9 @@ ggplot(plot_df,
                           plot_df$abbr[1], top_share * 100, times_second),
        caption = paste0(plot_df$abbr[1], " = ", plot_df$`Agency Name`[1])) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+print(plot_worst_of)
+
 ```
 
 
@@ -492,7 +495,7 @@ most_expensive_energy_plot <- EIA_SEP_REPORT |>
   arrange(desc(electricity_price_MWh)) |>
   slice(1:5)
 
-ggplot(most_expensive_energy_plot,
+plot_most_expensive <- ggplot(most_expensive_energy_plot,
        aes(x = reorder(state_abbreviation, -electricity_price_MWh),
            y = electricity_price_MWh)) +
   geom_col(fill = "dodgerblue4") +
@@ -500,6 +503,8 @@ ggplot(most_expensive_energy_plot,
   labs(x = "State", y = "Price Per MWh",
        title = "States with most expensive energy per MWh") +
   theme(axis.text.x = element_text(angle = 0, vjust = 1, hjust = 1))
+
+print(plot_most_expensive)
 ```
 
 ```{r}
@@ -641,7 +646,7 @@ most_fuel_consumed_plot <- NTD_ENERGY |>
        title = "Total Fuel Consumption by Type") +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
 
-most_fuel_consumed_plot
+print(most_fuel_consumed_plot)
 ```
 
 ```{r}
