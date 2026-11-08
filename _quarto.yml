@@ -23,6 +23,7 @@ editor:
 
 execute:
   cache: true
+  code-link: false
   
 output:
   html_document:
