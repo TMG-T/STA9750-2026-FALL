@@ -1,6 +1,720 @@
- ---
-  title: "Mini-Project Placeholder"
-  ---
+# Vermont Wins Big at Sixth GTA Awards.
+By: Timothy Golubowski \
+Last Updated: 11/6/2026
+
+---
+***Last *** month in Vice City Florida, the sixth annual GTA, Greatest Transit Awards, were held in the Hyman Memorial Stadium, and over five thousand transit and energy officials came from around the country, and braved winds and rain from tropical storm Tommy to attend the nations most popular transit convention. 
+
+## Big Winners of the Night 
+Vermont and New Jersey won two of the biggest, yet contrasting awards. The Green Mountain Transit Authority from Vermont won the Greenest Transit Award coming in first with the least emissions of carbon dioxide per passenger mile and least emission of carbon dioxide per UPT.  
+
+::: {.callout-tip collapse="true"}
+## Data Loading and calculations for this release.
+
+For the greatest transparency to our readers, we always include our figures and methodology. You can find the R scripts neccesary for this press release here, along with scripts for specific tasks done during the exploritory data analysis phase of writing this rlease
+
+```{r}
+#| label: State Electricity Profiles
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary: Loading data from State Electricity Profiles Task 1a
+
+library(tidyverse)
+library(stringr)
+library(httr2)
+library(rvest)
+
+get_eia_sep <- function(state, abbr){
+    library(tidyverse)
+    library(stringr)
+    library(httr2)
+    library(rvest)
+    library(fs)
   
-  This is a placeholder for STA9750 Mini-Project 2. Check back soon for more!
+    state_formatted <- str_to_lower(state) |> str_replace_all("\\s", "")
+    
+    dir_name <- fs::path("data", "mp02")
+    file_name <- fs::path(dir_name, state_formatted)
+    
+    fs::dir_create(dir_name, recurse=TRUE)
+    
+    if(!fs::file_exists(file_name)){
+        BASE_URL <- "https://www.eia.gov"
+        RESPONSE <- request(BASE_URL) |> 
+          req_url_path("electricity", 
+                       "state", 
+                       state_formatted) |>
+          req_headers(
+            `User-Agent` = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:149.0) Gecko/20100101 Firefox/149.0"
+            ) |>   
+          req_retry(
+                max_tries = 4, 
+          ) |>
+          req_perform(file_name)
+    
+        resp_check_status(RESPONSE)
+    }
+    
+    page <- read_html(file_name)
+    tbl  <- html_element(page, "table")
+
+    if (inherits(tbl, "xml_missing")) {
+      fs::file_delete(file_name)   
+      stop("No table found for ", state, ". Cached file removed; re-run.")
+      Sys.sleep(1)
+}
+
+TABLE <- tbl |> 
+    html_table() |>
+    mutate(Item = str_to_lower(Item))
+    
+    TABLE <- read_html(file_name) |> 
+        html_element("table") |> 
+        html_table() |>
+        mutate(Item = str_to_lower(Item))
+    
+    if("U.S. rank" %in% colnames(TABLE)){
+        TABLE <- TABLE |> rename(Rank = `U.S. rank`)
+    }
+    
+    CO2_MWh <- TABLE |> 
+        filter(Item == "carbon dioxide (lbs/mwh)") |>
+        pull(Value) |> 
+        str_replace_all(",", "") |>
+        as.numeric()
+    
+    PRIMARY <- TABLE |> 
+        filter(Item == "primary energy source") |> 
+        pull(Rank)
+    
+    RATE <- TABLE |>
+        filter(Item == "average retail price (cents/kwh)") |>
+        pull(Value) |>
+        as.numeric()
+    
+    GENERATION_MWh <- TABLE |>
+        filter(Item == "net generation (megawatthours)") |>
+        pull(Value) |>
+        str_replace_all(",", "") |>
+        as.numeric()
+    data.frame(CO2_MWh               = CO2_MWh, 
+               primary_source        = PRIMARY,
+               electricity_price_MWh = RATE * 10, # / 100 cents to dollars &
+               # * 1000 kWh to MWH 
+               generation_MWh        = GENERATION_MWh, 
+               state                 = state, 
+               abbreviation          = abbr
+              
+    )
+}
+
+EIA_SEP_REPORT <- map2(state.name, state.abb, get_eia_sep) |> list_rbind()
+```
+
+```{r}
+#| label: Energy Consumption
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Loading 2025 Annual Database Energy Consumption report. Task 1b
+
+
+load_ntd_energy <- function(){
+  library(readxl)
+  library(httr2)
+  library(tidyverse)
+  library(fs)
   
+  # Create 'data/mp02' directory if not already present
+  DATA_DIR <- fs::path("data", "mp02")
+  fs::dir_create(DATA_DIR, recurse=TRUE)
+
+  NTD_ENERGY_FILE <- fs::path(DATA_DIR, "2025_ntd_energy.xlsx")
+
+  if(!fs::file_exists(NTD_ENERGY_FILE)){
+    library(httr2)
+  
+    request("https://www.transit.dot.gov/") |>
+      req_url_path("sites",
+                   "fta.dot.gov",
+                   "files",
+                   "2026-09",
+                   "2025 Energy Consumption_260806.xlsx") |> 
+      req_headers(
+        `User-Agent` = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:149.0) Gecko/20100101 Firefox/149.0") |> 
+      req_perform(NTD_ENERGY_FILE)
+  }
+  
+  if(file.info(NTD_ENERGY_FILE)$size < 1e4){
+        cat("I was unable to download the NTD Energy File. Please try again.\n")
+        stop("Download failed. Please delete the corrupted file by running `unlink('data/mp02/2025_ntd_energy.xlsx')` and try again.")
+    }
+
+  to_numeric_fill_0 <- function(x){
+    x <- if_else(x == "-", NA, x)
+    replace_na(as.numeric(x), 0)
+  }
+
+  read_excel(NTD_ENERGY_FILE) |> 
+    select(-c(`Reporter Type`, 
+              `Reporting Module`, 
+              `Gallons of Other Fuel`, 
+              `Other Fuel Description`)) |>
+    mutate(across(-c(`Agency Name`, 
+                     `Mode`,
+                     `TOS`), 
+                  to_numeric_fill_0)) |>
+    group_by(`NTD ID`, `Mode`, `Agency Name`) |>
+    summarize(across(where(is.numeric), sum), 
+              .groups = "keep") |>
+    mutate(ENERGY = sum(c_across(c(where(is.numeric))))) |>
+    filter(ENERGY > 0) |>
+    select(-ENERGY) |>
+    ungroup()
+}
+
+NTD_ENERGY <- load_ntd_energy()
+
+## This code needs to be completed (it was)
+
+NTD_ENERGY <- NTD_ENERGY |>
+    mutate(Mode=recode_values(Mode, 
+        "HR" ~ "Heavy Rail", 
+        "FB" ~ "Ferryboat",
+        "MB" ~ "Bus",
+        "SR" ~ "Streetcar Rail",
+        "TB" ~ "Trolleybus",
+        "VP" ~ "Vanpool",
+        "CB" ~ "Commuter Bus",
+        "RB" ~ "Bus Rapid Transit",
+        "LR" ~ "Light Rail",
+        "MG" ~ "Monorail and Automated Guideway modes",
+        "CR" ~ "Commuter Rail",
+        "AR" ~ "Alaska Railroad",
+        "TR" ~ "Aerial Tramways",
+        "YR" ~ "Hybrid Rail",
+        "IP" ~ "Inclined Plane",
+        "CC" ~ "Cable Car",
+        default="Unknown"))
+
+```
+
+```{r}
+#| label: NTD Service Load
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Loading NTD Service Load Report Task 1c
+
+load_ntd_service <- function(){
+  library(httr2)
+  library(tidyverse)
+  library(fs)
+  
+  # Create 'data/mp02' directory if not already present
+  DATA_DIR <- fs::path("data", "mp02")
+  fs::dir_create(DATA_DIR, recurse=TRUE)
+
+  NTD_SERVICE_FILE <- fs::path(DATA_DIR, "2025_ntd_service.csv")
+
+  if(!fs::file_exists(NTD_SERVICE_FILE)){
+    library(httr2)
+  
+    request("https://data.transportation.gov/resource/4fir-qbim.csv") |>
+      req_url_query(`$query`=paste(
+        "SELECT  `_5_digit_ntd_id` AS `NTD_ID`", 
+        "`max_agency` AS `AGENCY`",
+        "`max_reporter_type` AS `reporter_type`",
+        "`max_organization_type` AS `organization_type`",
+        "`max_city` AS `city`",
+        "`max_state` AS `state`",
+        "`mode`",
+        "`type_of_service`",
+        "`max_primary_uza_code` as `uza_code`",
+        "`max_primary_uza_name` as `uza_name`",
+        "`max_primary_uza_area_sq_miles` as `uza_sq_miles`",
+        "`max_primary_uza_population` as `uza_population`",
+        "`max_service_area_sq_miles` as `service_area_sq_miles`",
+        "`max_service_area_population` as `service_area_population`",
+        "`questionable_record` as `flagged_likely_inaccurate`",
+        "`sum_unlinked_passenger_trips_upt` + `sum_ada_upt` + `sum_sponsored_service_upt` as `total_upt`",
+        "`sum_passenger_miles` WHERE caseless_one_of(`report_year`, '2025') limit 50000", 
+        sep=",")) |>
+      req_headers(
+        `User-Agent` = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:149.0) Gecko/20100101 Firefox/149.0") |> 
+      req_perform(NTD_SERVICE_FILE)
+  }
+  
+  if(file.info(NTD_SERVICE_FILE)$size < 1e4){
+        cat("I was unable to download the NTD Service File. Please try again.\n")
+        stop("Download failed. Please delete the corrupted file by running `unlink('data/mp02/2025_ntd_service.xlsx')` and try again.")
+    }
+
+  read_csv(NTD_SERVICE_FILE) |>
+    mutate(flagged_likely_inaccurate = !is.na(flagged_likely_inaccurate))
+}
+
+NTD_SERVICE <- load_ntd_service()
+
+
+```
+
+```{r}
+#| label: Calculate Emissions
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Emissions Calculation Task 5
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(gt)
+
+
+
+EIA_SEP_REPORT <- EIA_SEP_REPORT |>
+  rename(state_abbreviation = abbreviation)
+
+NTD_SERVICE <- NTD_SERVICE |> 
+  rename(state_abbreviation = state)
+
+
+
+sevice_eia_join <- left_join(NTD_SERVICE, EIA_SEP_REPORT, by = join_by(state_abbreviation)) 
+  
+sevice_eia_join <- sevice_eia_join |> mutate(NTD_ID = as.double(NTD_ID))
+
+NTD_ENERGY <- NTD_ENERGY |> 
+  rename(NTD_ID = `NTD ID`)
+
+service_energy_eia <- left_join(sevice_eia_join, NTD_ENERGY, by = join_by(NTD_ID))
+
+
+service_energy_eia <- service_energy_eia |>
+  mutate(CO2_emissions = (CO2_MWh * generation_MWh) + (`Gallons of Bio-Diesel` * 22.45) + (`Gallons of Bunker Fuel` * 22.45 ) + (`Gallons of Compressed Natural Gas` * 16.30 ) + (`Gallons of Diesel Fuel` * 22.45) + (`Gallons of Ethanol` * 12.70) + (`Gallons of Gasoline` * 20.86) + (`Gallons of Kerosene` * 21.78) + (`Gallons of Liquified Nat Gas` * 9.90 ) + (`Gallons of Liquified Petroleum Gas` * 12.68))
+
+
+```
+
+```{r}
+#| label: Transit Usage
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Transit and Emission relationship Task 6
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(gt)
+
+service_energy_eia_no_na <- service_energy_eia |> #I had very stubborn NAs 
+  filter(!is.na(total_upt)) |>
+  filter(!is.na(CO2_emissions))
+  
+         
+#passenger miles and agency emissions in seperate tables and then joined & judged 
+upt_by_agency <- service_energy_eia_no_na |> 
+  filter(!is.na(total_upt)) |>
+  distinct(AGENCY, type_of_service, .keep_all = TRUE) |>
+  group_by(AGENCY) |>
+  filter(!is.na(total_upt)) |>
+  summarise(sum_upt = sum(total_upt, NA.rm = TRUE))
+
+emissions_by_agency <- service_energy_eia_no_na |>
+  filter(!is.na(CO2_emissions)) |>
+  group_by(AGENCY) |>
+  summarise(sum_emissions = sum(CO2_emissions, NA.rm =TRUE))
+
+per_upt <- emissions_by_agency |>
+  left_join(upt_by_agency, by = "AGENCY") |>
+  mutate(emissions_per_upt = sum_emissions / sum_upt) |>
+  mutate(
+  efficiency_rating = case_when(
+    emissions_per_upt <= quantile(emissions_per_upt, 0.25, na.rm = TRUE) ~ "More efficient",
+    emissions_per_upt >= quantile(emissions_per_upt, 0.75, na.rm = TRUE) ~ "Less efficient",
+    !is.na(emissions_per_upt) ~ "Average"
+  )
+)
+
+#passenger miles and agency emissions in seperate tables and then joined & judged 
+passenger_mile_by_agency <- service_energy_eia_no_na |>
+  filter(!is.na(sum_passenger_miles)) |>
+  distinct(AGENCY, type_of_service, .keep_all = TRUE) |>
+  group_by(AGENCY) |>
+  filter(!is.na(sum_passenger_miles)) |>
+  summarise(total_passenger_miles = sum(sum_passenger_miles, NA.rm = TRUE))
+
+emissions_by_agency <- service_energy_eia_no_na |>
+  filter(!is.na(CO2_emissions)) |>
+  group_by(AGENCY) |>
+  summarise(sum_emissions = sum(CO2_emissions, NA.rm =TRUE))
+
+per_passenger_miles <- emissions_by_agency |>
+  left_join(passenger_mile_by_agency, by = "AGENCY") |>
+  mutate(emissions_per_passenger_mile = sum_emissions / total_passenger_miles) |>
+  mutate(
+  efficiency_rating = case_when(
+    emissions_per_passenger_mile <= quantile(emissions_per_passenger_mile, 0.25, na.rm = TRUE) ~ "More efficient",
+    emissions_per_passenger_mile >= quantile(emissions_per_passenger_mile, 0.75, na.rm = TRUE) ~ "Less efficient",
+    !is.na(emissions_per_passenger_mile) ~ "Average"
+  )
+)
+
+```
+:::
+
+
+```{r}
+#| label: Greenest Transit Award Graph
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  See how green the Greenest Transit Award winner is
+library(ggplot2)
+library(dplyr)
+
+summary_df <- data.frame(
+  stat  = c("Median", "Green Mountain Transit"),
+  value = c(median(per_passenger_miles$emissions_per_passenger_mile, na.rm = TRUE),
+            min(per_passenger_miles$emissions_per_passenger_mile, na.rm = TRUE))
+)
+
+
+summary_df$stat <- factor(summary_df$stat, levels = c("Median" ,"Green Mountain Transit"))
+
+ggplot(summary_df, aes(x = stat, y = value)) +
+  geom_col(fill = "dodgerblue4") +
+  geom_text(aes(label = round(value, 2)), vjust = -0.3, size = 3) +
+  scale_y_sqrt(expand = expansion(mult = c(0, 0.1))) +
+  labs(x = "Median vs. Green Mountain Transit Authority", y = "Emissions per Passenger Mile ",
+       title = "Median CO2 Emissions per Passenger Mile vs. Green Mountain Transit Authority CO2 Emissions per Passenger Mile") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+
+```
+
+While the New Jersey Transit Corporation won the Worst of Fuel Consumption award, due to the NJTC insatiable thirst for fuel. The spokesperson for the NJTC, Niko Belic, said in a statement "We are getting quenched every year ... we hope to cut this number in half by 2030". 
+
+```{r}
+#| label: Worst of Fuel Consumption Graph
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary: Top Fuel Consumers
+
+library(dplyr)
+library(ggplot2)
+
+fuel_cols <- c("Gallons of Bio-Diesel", "Gallons of Bunker Fuel",
+               "Gallons of Compressed Natural Gas", "Gallons of Diesel Fuel",
+               "Gallons of Ethanol", "Gallons of Gasoline",
+               "Gallons of Kerosene", "Gallons of Liquified Nat Gas",
+               "Gallons of Liquified Petroleum Gas")
+
+
+make_acronym <- function(x) {
+  stop_words <- c("of", "the", "and", "for", "in", "a", "dba")
+  vapply(strsplit(x, "[^A-Za-z0-9]+"), function(w) {
+    w <- w[w != "" & !tolower(w) %in% stop_words]
+    paste0(ifelse(w == toupper(w) & nchar(w) > 1, w, substr(w, 1, 1)),
+           collapse = "")
+  }, character(1))
+}
+
+manual_abbr <- c(
+  # "MTA New York City Transit" = "NYCT"
+)
+
+agency_fuel <- NTD_ENERGY |>
+  filter(Mode != "Unknown") |>
+  mutate(total_fuel = rowSums(pick(all_of(fuel_cols)), na.rm = TRUE)) |>
+  group_by(`Agency Name`) |>
+  summarise(total_fuel = sum(total_fuel, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(total_fuel)) |>
+  mutate(abbr = make_acronym(`Agency Name`),
+         abbr = coalesce(unname(manual_abbr[`Agency Name`]), abbr),
+         abbr = make.unique(abbr),   # avoids two agencies sharing an acronym
+         highlight = row_number() == 1)
+
+top_share    <- agency_fuel$total_fuel[1] / sum(agency_fuel$total_fuel)
+times_second <- agency_fuel$total_fuel[1] / agency_fuel$total_fuel[2]
+
+plot_df <- slice_head(agency_fuel, n = 10)
+
+ggplot(plot_df,
+       aes(x = reorder(abbr, -total_fuel),
+           y = total_fuel / 1e6,
+           fill = highlight)) +
+  geom_col() +
+  geom_text(aes(label = round(total_fuel / 1e6, 3)), vjust = -0.3, size = 3) +
+  scale_fill_manual(values = c("TRUE" = "dodgerblue4", "FALSE" = "lightsteelblue3"),
+                    guide = "none") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  labs(x = "Transit Authority", y = "Gallons (millions)",
+       title = "The #1 Fuel Consumer Dwarfs the Rest",
+       subtitle = sprintf("%s uses %.1f%% of all fuel and %.1fx the #2 agency",
+                          plot_df$abbr[1], top_share * 100, times_second),
+       caption = paste0(plot_df$abbr[1], " = ", plot_df$`Agency Name`[1])) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+
+## But What Do These Awards Mean? 
+
+### Greenest transit Award
+The Greenest Transit award is given to the transit agency with the smallest emissions, pounds of CO2 released, per passenger boarding of a public transit vehicle referred to as a Unlinked Passenger Trip or UPT, and per passenger miles, total volume of service consumed by riders. The CO2 emissions are tabulated from the [NTD Service Report](https://www.transit.dot.gov/ntd) and the [EIA Carbon Dioxide Emissions Coefficients](https://www.eia.gov/environment/emissions/co2_vol_mass.php). The gallons of used fuel are multiplied by carbon dioxide emissions coefficients, and totaled together with all other fuel sources used. 
+
+### Worst of Fuel Consumption Award
+The Worst of Fuel Consumption award is given to the transit Agency that consumes the most fuel out of all transit agencies that were tracked in the [NTD Energy Report](https://www.transit.dot.gov/ntd/data-product/2024-annual-database-energy-consumption).
+
+
+### Looking forward
+Although the sixth GTA has just ended, pundits have already been making thier predictions for the next which has already been confirmed for the Liberty Memorial Coliseum in Liberty City. All we can do now is wait and see who wins the next awards. 
+
+-Timothy Golubowski, transportation staff writer for Vice City News
+
+## Methodology and Project Task Answers. 
+
+Below are the remaining completed EDA tasks for the EIA and NTD service report, along with table joining tasks. 
+
+```{r}
+#| label: EIA Report EDA Q1
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary: States With Most Expensive Energy Task 3a
+
+library(ggplot2)
+most_expensive_energy_plot <- EIA_SEP_REPORT |>
+  arrange(desc(electricity_price_MWh)) |>
+  slice(1:5)
+
+ggplot(most_expensive_energy_plot,
+       aes(x = reorder(state_abbreviation, -electricity_price_MWh),
+           y = electricity_price_MWh)) +
+  geom_col(fill = "dodgerblue4") +
+  geom_text(aes(label = round(electricity_price_MWh, 3)), vjust = -0.3, size = 3) +
+  labs(x = "State", y = "Price Per MWh",
+       title = "States with most expensive energy per MWh") +
+  theme(axis.text.x = element_text(angle = 0, vjust = 1, hjust = 1))
+```
+
+```{r}
+#| label: EIA Report EDA Q2
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  States With Dirtiest Electricty Task 3a
+
+library(dplyr)
+library(gt)
+
+dirtiest_electricity_mix <- EIA_SEP_REPORT |>
+  arrange(desc(CO2_MWh)) |>
+  slice(1:10) |>
+  dplyr::select(CO2_MWh, primary_source, state) |>
+  gt() |>
+  cols_label(CO2_MWh = md("Lbs of CO2 per Megawatt-hour"),
+             primary_source = md("Primary Energy Source"),
+             state = md("State")) |>
+  tab_header(title="States With Dirtiest Electricty Mix", 
+               subtitle="States with the largest number of lbs of CO2 produced per Megawatt Hour all use fossil fuels.")
+
+dirtiest_electricity_mix
+
+```
+
+```{r}
+#| label: EIA Report EDA Q3
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary: CO2 produced per Megawatt hour calculation Task 3a
+
+library(gt)
+
+weighted_avg_co2 <- EIA_SEP_REPORT |>
+  summarize(weighted_avg_price = weighted.mean(CO2_MWh, generation_MWh))
+
+cat("The weighted average of CO2 produced per Megawatt hour of power, weighted by Megawatt-hours generated, is",as.numeric(weighted_avg_co2), "lbs per megawatt hour.")
+
+
+```
+
+```{r}
+#| label: EIA Report EDA Q4
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Rarest Primary Energy Source Calculation Task 3a
+library(gt)
+rarest_primary_energy <- EIA_SEP_REPORT |>
+  group_by(primary_source) |>
+  summarise(count = n()) |> 
+  arrange(count) |>
+  head(3)
+
+result <- 
+  semi_join(EIA_SEP_REPORT, rarest_primary_energy, by = c("primary_source")) |>
+  arrange(primary_source) |>
+  dplyr::select(state, primary_source, electricity_price_MWh ) |>
+  gt() |>
+  cols_label(electricity_price_MWh = md("Price per Megawatt-hour (USD)"),
+             primary_source = md("Primary Energy Source"),
+             state = md("State")) |>
+  tab_header(title="States With Rarest Primary Energy Source", 
+               subtitle="The rarest primary energy sources include, Petroleum, Hydroelectric, and Wind")
+
+  
+  
+
+result
+```
+
+```{r}
+#| label: EIA Report EDA Q5
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Texas Vs New York CO2 per Megawatt of Energy Task 3a
+
+texas_dirty_energy <- as.numeric(EIA_SEP_REPORT[EIA_SEP_REPORT$state == "Texas", "CO2_MWh"])
+ny_dirty_energytg <- as.numeric(EIA_SEP_REPORT[EIA_SEP_REPORT$state == "New York", "CO2_MWh"])
+
+ny_texas_comparison <- texas_dirty_energy / ny_dirty_energytg
+
+cat("Texas produces",ny_texas_comparison, " times more lbs of CO2 per megawatt hour than New York.")
+
+
+```
+
+```{r}
+#| label: NTD Energy Usage Q1
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Top Fuel Consumers Task 3b
+
+
+top_5_most_fuel <- NTD_ENERGY |> 
+  filter(Mode != "Unknown") |>
+  mutate(total_fuel = rowSums(across(c("Gallons of Bio-Diesel", "Gallons of Bunker Fuel", "Gallons of Compressed Natural Gas", "Gallons of Diesel Fuel", "Gallons of Ethanol", "Gallons of Gasoline", "Gallons of Kerosene", "Gallons of Liquified Nat Gas", "Gallons of Liquified Petroleum Gas", )), na.rm = TRUE)) |>
+  group_by(`Agency Name`) |>
+  arrange(desc(total_fuel)) |>
+  ungroup() |>
+  slice(1:5) |>
+  mutate(across(c(`Gallons of Compressed Natural Gas`, `Gallons of Diesel Fuel`, `Gallons of Gasoline`, total_fuel), ~ round(.x / 1000000, 3))) |>
+  dplyr::select(`Agency Name`, `Gallons of Compressed Natural Gas`, `Gallons of Diesel Fuel`, `Gallons of Gasoline`, total_fuel ) |>
+  gt() |>
+  cols_label(`Agency Name` = md("Transit Authority"),
+             total_fuel = md("Total Gallons of Fuel Used")) |>
+  tab_header(title="Most Populous Urban Centers Use Most Fuel for Public Transport", 
+               subtitle="All values in millions of gallons of fuel.")
+  
+top_5_most_fuel
+
+
+
+```
+
+```{r}
+#| label: NTD ENERGY EDA Q2
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Total Fuel Consumption By Type Calculation Task 3b
+library(ggplot2)
+most_fuel_consumed_plot <- NTD_ENERGY |>
+  select(-c(`Bio-Diesel Description`, `Kilograms of Hydrogen`, `Kilowatt hours of Electric Propulsion`, `Kilowatt hours of Electric Battery`, NTD_ID)) |>
+  summarise(
+    across(where(is.numeric), sum, na.rm = TRUE)
+  ) |> 
+  pivot_longer(everything(), names_to = "fuel_type", values_to = "gallons") |>
+  mutate(fuel_type = sub("Gallons of ", "", fuel_type)) |>
+  ggplot(aes(x = reorder(fuel_type, -gallons), y = gallons / 1e6)) +
+  geom_col(fill = "dodgerblue4") +
+  geom_text(aes(label = round(gallons / 1e6, 3)), vjust = -0.3, size = 3) +
+  labs(x = "Fuel type", y = "Gallons (millions)",
+       title = "Total Fuel Consumption by Type") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+most_fuel_consumed_plot
+```
+
+```{r}
+#| label: NTD ENERGY EDA Q3
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Least Common Fuel Source Calculation. Task 3b
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+least_common_fuel_source <- NTD_ENERGY |>
+  select(-c(`Bio-Diesel Description`, `Kilograms of Hydrogen`, `Kilowatt hours of Electric Propulsion`, `Kilowatt hours of Electric Battery`, NTD_ID)) |>
+  summarise(
+    across(where(is.numeric), sum, na.rm = TRUE)
+  ) |> 
+  pivot_longer(everything(), names_to = "fuel_type", values_to = "gallons") |>
+  mutate(fuel_type = sub("Gallons of ", "", fuel_type)) |>
+  filter(gallons != 0) |> 
+  arrange(gallons) |>
+  slice_head(n = 1)
+
+cat("The least common fuel source is",as.character(least_common_fuel_source[1, 1]), " with only", as.numeric(least_common_fuel_source[1, 2]), "gallons being used.")
+
+```
+
+```{r}
+#| label: Data Intergration
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary:  Initial Table Joining Task 4
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(gt)
+
+
+#EIA_SEP_REPORT <- EIA_SEP_REPORT |> rename(state_abbreviation = abbreviation)
+#NTD_SERVICE <- NTD_SERVICE |> rename(state_abbreviation = state)
+#NTD_ENERGY <- NTD_ENERGY|> rename(NTD_ID = `NTD ID`)
+
+
+sevice_eia_join <- left_join(NTD_SERVICE, EIA_SEP_REPORT, by = join_by(state_abbreviation))
+sevice_eia_join <- sevice_eia_join |> mutate(NTD_ID = as.double(NTD_ID))
+
+service_energy_eia <- left_join(sevice_eia_join, NTD_ENERGY, by = join_by(NTD_ID))
+
+nuculear_upt <- service_energy_eia |> 
+  filter(primary_source == "Nuclear") |>
+  summarise(Nuclear_UPTs = sum(total_upt, na.rm = TRUE))
+
+nuculear_upt |> gt() |>
+  cols_label(Nuclear_UPTs = md("Number of UPTs in States With Nuclear Energy"))
+
+most_bio_diesel_metro <- service_energy_eia |>
+  arrange(desc(`Gallons of Bio-Diesel`)) |>
+  dplyr::select(uza_name) |>
+  head(n = 1)
+  
+
+most_bio_diesel_metro |> 
+  gt() |>
+  cols_label(uza_name = md("Area with Greatest Consumption of Bio Diesel (in gallons)"))
+
+```
+
+
+::: {.callout-note collapse="true"}
+## AI Usage Statement
+
+Claude was used for debugging of code for this project, no generative AI was used for any non-code text. 
+:::
