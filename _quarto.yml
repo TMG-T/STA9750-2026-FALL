@@ -23,3 +23,7 @@ editor:
 
 execute:
   cache: true
+  
+output:
+  html_document:
+    self_contained: true
