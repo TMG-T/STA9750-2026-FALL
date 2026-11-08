@@ -16,7 +16,7 @@ Vermont and New Jersey won two of the biggest, yet contrasting awards. The Green
 ::: {.callout-tip collapse="true"}
 ## Data Loading and calculations for this release.
 
-For the greatest transparency to our readers, we always include our figures and methodology. You can find the R scripts neccesary for this press release here, along with scripts for specific tasks done during the exploritory data analysis phase of writing this rlease
+For the greatest transparency to our readers, we always include our figures and methodology. You can find the R scripts neccesary for this press release here, along with scripts for specific tasks done during the exploratory data analysis phase of writing this rlease
 
 ```{r}
 #| label: State Electricity Profiles

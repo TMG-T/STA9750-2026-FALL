@@ -17,6 +17,7 @@ format:
   html:
     theme: cyborg
     toc: false
+    embed-resources: true
 
 editor:
   mode: source
